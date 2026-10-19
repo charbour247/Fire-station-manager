@@ -1,7 +1,8 @@
 """StationDesk: Windows desktop operations for a fire department."""
 import sys, os, csv, subprocess, tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime
+from datetime import datetime, date, timedelta
+import calendar
 from pathlib import Path
 from store import Store, KINDS
 NAVY='#152738'; RED='#a52b32'; BG='#f3f1ec'; INK='#203243'; MUTED='#61717c'
@@ -101,6 +102,8 @@ class App(tk.Tk):
         tree=ttk.Treeview(wrap,columns=columns,show='headings',height=height,selectmode='browse')
         for col in columns: tree.heading(col,text=col); tree.column(col,width=130,minwidth=65,stretch=True)
         scroll=ttk.Scrollbar(wrap,orient='vertical',command=tree.yview); tree.configure(yscrollcommand=scroll.set)
+        horizontal=ttk.Scrollbar(wrap,orient='horizontal',command=tree.xview); tree.configure(xscrollcommand=horizontal.set)
+        horizontal.pack(side='bottom',fill='x')
         scroll.pack(side='right',fill='y'); tree.pack(fill='both',expand=True)
         for key,values in rows: tree.insert('','end',iid=str(key),values=values)
         return tree
@@ -119,7 +122,7 @@ class App(tk.Tk):
         self.button(status,'Open timeclock →',lambda:self.page('Timeclock'),True).pack(side='right')
         self.label(self.body,'Upcoming schedule',20).pack(anchor='w')
         rows=self.store.rows('SELECT * FROM shifts WHERE member=? AND end>=? ORDER BY start LIMIT 5',(self.user['id'],datetime.now().isoformat(timespec='minutes')))
-        self.table(self.body,('Assignment','Type','Starts','Location'),[(r['id'],(r['title'],r['kind'],local(r['start']),r['location'])) for r in rows],4)
+        self.table(self.body,('Assignment','Type','Apparatus','Starts','Location'),[(r['id'],(r['title'],r['kind'],r['apparatus'] or 'Unassigned',local(r['start']),r['location'])) for r in rows],4)
         if not rows: self.label(self.body,'No upcoming assignments. Your administrator can add shifts in Schedule.',12,MUTED).pack(anchor='w')
     def show_timeclock(self):
         panel=self.card(self.body); panel.pack(fill='x')
@@ -186,35 +189,115 @@ class App(tk.Tk):
             self.store.add_training(self.user['id'],title.get(),day.get(),hours.get(),category.get(),source.get()); d.destroy(); self.page('Training')
         self.button(p,'Save record',lambda:self.attempt(save),True).pack(fill='x',pady=20)
     def show_schedule(self):
-        row=tk.Frame(self.body,bg=BG); row.pack(fill='x')
         admin=self.user['role']=='Administrator'
-        self.label(row,'Station assignments' if admin else 'My assignments',19).pack(side='left')
-        if admin: self.button(row,'+ Schedule assignment',self.shift_form,True).pack(side='right')
-        self.label(self.body,'Local station time · Past and upcoming assignments',12,MUTED).pack(anchor='w',pady=12)
-        query='SELECT s.*, m.name FROM shifts s JOIN members m ON m.id=s.member'
-        rows=self.store.rows(query+('' if admin else ' WHERE member=?')+' ORDER BY start DESC',() if admin else (self.user['id'],))
-        tree=self.table(self.body,('Member','Assignment','Type','Start','End','Location'),[(r['id'],(r['name'],r['title'],r['kind'],local(r['start']),local(r['end']),r['location'])) for r in rows],12)
+        self.schedule_day=getattr(self,'schedule_day',date.today())
+        year,month=getattr(self,'schedule_month',(self.schedule_day.year,self.schedule_day.month))
+        self.schedule_month=(year,month)
+        bar=tk.Frame(self.body,bg=BG); bar.pack(fill='x')
+        def move(offset):
+            index=year*12+month-1+offset
+            self.schedule_month=(index//12,index%12+1)
+            self.schedule_day=date(*self.schedule_month,1)
+            self.page('Schedule')
+        self.button(bar,'‹',lambda:move(-1)).pack(side='left')
+        self.label(bar,date(year,month,1).strftime('%B %Y'),22).pack(side='left',padx=14)
+        self.button(bar,'›',lambda:move(1)).pack(side='left')
+        def today():
+            self.schedule_day=date.today()
+            self.schedule_month=(self.schedule_day.year,self.schedule_day.month)
+            self.page('Schedule')
+        self.button(bar,'Today',today).pack(side='left',padx=8)
         if admin:
+            self.button(bar,'+ Assignment',lambda:self.attempt(self.shift_form),True).pack(side='right')
+            self.button(bar,'+ Apparatus',lambda:self.attempt(self.apparatus_form)).pack(side='right',padx=8)
+        self.label(self.body,('Station calendar' if admin else 'My calendar')+' · Select a day to view personnel and apparatus · Local station time',11,MUTED).pack(anchor='w',pady=(8,6))
+        weeks=calendar.Calendar(firstweekday=6).monthdatescalendar(year,month)
+        while len(weeks)<6:
+            weeks.append([weeks[-1][-1]+timedelta(days=n) for n in range(1,8)])
+        first=weeks[0][0]; last=weeks[-1][-1]+timedelta(days=1)
+        entries=self.store.schedule_entries(self.user['id'],first.isoformat()+'T00:00',last.isoformat()+'T00:00')
+        def on_day(day):
+            start=day.isoformat()+'T00:00'; end=(day+timedelta(days=1)).isoformat()+'T00:00'
+            return [r for r in entries if r['start']<end and r['end']>start]
+        grid=tk.Frame(self.body,bg='#dedad2'); grid.pack(fill='both',expand=True)
+        for col,heading in enumerate(('Sun','Mon','Tue','Wed','Thu','Fri','Sat')):
+            grid.columnconfigure(col,weight=1,uniform='day')
+            tk.Label(grid,text=heading,bg=NAVY,fg='white',font=('Times New Roman',11,'bold'),pady=5).grid(row=0,column=col,sticky='nsew',padx=1,pady=1)
+        def select(day):
+            self.schedule_day=day; self.schedule_month=(day.year,day.month)
+            self.page('Schedule')
+        for row,week in enumerate(weeks,1):
+            grid.rowconfigure(row,weight=1,uniform='week')
+            for col,day in enumerate(week):
+                daily=on_day(day)
+                text=str(day.day)+(' • Today' if day==date.today() else '')
+                if daily:
+                    text+='\n'+str(len(daily))+' · '+(daily[0]['apparatus'] or 'Unassigned')
+                selected=day==self.schedule_day
+                tk.Button(grid,text=text,anchor='nw',justify='left',font=('Times New Roman',10),
+                          bg=RED if selected else ('white' if day.month==month else '#eae7e1'),
+                          fg='white' if selected else (INK if day.month==month else MUTED),
+                          relief='flat',padx=5,pady=3,width=1,height=2,cursor='hand2',
+                          command=lambda d=day:select(d)).grid(row=row,column=col,sticky='nsew',padx=1,pady=1)
+        selected_rows=on_day(self.schedule_day)
+        self.label(self.body,self.schedule_day.strftime('%A, %B %d')+' · '+str(len(selected_rows))+' assignments',17).pack(anchor='w',pady=(10,0))
+        tree=self.table(self.body,('Member','Apparatus','Assignment','Type','Start','End','Location'),
+            [(r['id'],(r['name'],r['apparatus'] or 'Unassigned',r['title'],r['kind'],local(r['start']),local(r['end']),r['location'])) for r in selected_rows],3)
+        if admin:
+            actions=tk.Frame(self.body,bg=BG); actions.pack(fill='x')
+            def selected_id():
+                if not tree.selection(): raise ValueError('Select an assignment from the day list.')
+                return int(tree.selection()[0])
+            self.button(actions,'Edit selected',lambda:self.attempt(lambda:self.shift_form(selected_id()))).pack(side='left')
+            tree.bind('<Double-1>',lambda event:self.attempt(lambda:self.shift_form(selected_id())))
             def remove():
-                if not tree.selection(): raise ValueError('Select an assignment.')
-                if messagebox.askyesno('Cancel assignment','Remove the selected assignment?'):
-                    with self.store.db: self.store.db.execute('DELETE FROM shifts WHERE id=?',(tree.selection()[0],))
+                self.require_admin(); shift_id=selected_id()
+                if messagebox.askyesno('Cancel assignment','Remove the selected assignment?',parent=self):
+                    self.store.remove_shift(self.user['id'],shift_id)
                     self.page('Schedule')
-            self.button(self.body,'Remove selected assignment',lambda:self.attempt(remove)).pack(anchor='w')
-    def shift_form(self):
-        d,p=self.dialog('Schedule assignment')
+            self.button(actions,'Remove selected',lambda:self.attempt(remove)).pack(side='left',padx=8)
+    def apparatus_form(self):
+        self.require_admin()
+        d,p=self.dialog('Add station apparatus')
+        name=self.field(p,'Apparatus name · e.g. Engine 1, Ladder 2')
+        current=self.store.rows('SELECT name FROM apparatus ORDER BY name')
+        self.label(p,'Current apparatus:\n'+('\n'.join(r['name'] for r in current) or 'No apparatus added yet.'),12,MUTED,justify='left',wraplength=450).pack(anchor='w',pady=16)
+        def save():
+            self.require_admin()
+            self.store.add_apparatus(self.user['id'],name.get())
+            d.destroy(); self.page('Schedule')
+        self.button(p,'Add apparatus',lambda:self.attempt(save),True).pack(fill='x',pady=18)
+    def shift_form(self,shift_id=None):
+        self.require_admin()
+        existing=None
+        if shift_id is not None:
+            found=self.store.rows('SELECT * FROM shifts WHERE id=?',(shift_id,))
+            if not found: raise ValueError('This assignment no longer exists.')
+            existing=found[0]
+        d,p=self.dialog('Edit assignment' if existing else 'Schedule assignment')
+        d.geometry('560x740')
         members=self.store.rows('SELECT id,name,username FROM members ORDER BY name')
         mapping={f"{r['name']} ({r['username']})":r['id'] for r in members}
-        member=self.field(p,'Member',next(iter(mapping)),choices=list(mapping))
-        title=self.field(p,'Assignment title'); kind=self.field(p,'Activity','Duty',choices=KINDS)
-        date=datetime.now().strftime('%Y-%m-%d')
-        start=self.field(p,'Start · YYYY-MM-DD HH:MM',date+' 08:00')
-        end=self.field(p,'End · YYYY-MM-DD HH:MM',date+' 16:00')
-        location=self.field(p,'Location','Station 1')
+        default=next((key for key,value in mapping.items() if existing and value==existing['member']),next(iter(mapping)))
+        member=self.field(p,'Member',default,choices=list(mapping))
+        title=self.field(p,'Assignment title',existing['title'] if existing else 'Duty shift')
+        kind=self.field(p,'Activity',existing['kind'] if existing else 'Duty',choices=KINDS)
+        options={'Unassigned':''}
+        options.update({r['name']:r['name'] for r in self.store.rows('SELECT name FROM apparatus ORDER BY name')})
+        apparatus=self.field(p,'Apparatus',existing['apparatus'] if existing and existing['apparatus'] else 'Unassigned',choices=list(options))
+        selected=getattr(self,'schedule_day',date.today()).isoformat()
+        start=self.field(p,'Start · YYYY-MM-DD HH:MM',existing['start'].replace('T',' ') if existing else selected+' 08:00')
+        end=self.field(p,'End · YYYY-MM-DD HH:MM',existing['end'].replace('T',' ') if existing else selected+' 16:00')
+        location=self.field(p,'Location',existing['location'] if existing else 'Station 1')
+        self.label(p,'Add apparatus from the calendar before assigning it.\nMultiple members can crew the same apparatus.',11,MUTED,justify='left').pack(anchor='w',pady=(10,0))
         def save():
+            self.require_admin()
             a=datetime.strptime(start.get(),'%Y-%m-%d %H:%M').isoformat(timespec='minutes')
             b=datetime.strptime(end.get(),'%Y-%m-%d %H:%M').isoformat(timespec='minutes')
-            self.store.add_shift(mapping[member.get()],title.get(),kind.get(),a,b,location.get()); d.destroy(); self.page('Schedule')
+            self.store.add_shift(mapping[member.get()],title.get(),kind.get(),a,b,location.get(),options[apparatus.get()],shift_id)
+            self.schedule_day=datetime.fromisoformat(a).date()
+            self.schedule_month=(self.schedule_day.year,self.schedule_day.month)
+            d.destroy(); self.page('Schedule')
         self.button(p,'Save assignment',lambda:self.attempt(save),True).pack(fill='x',pady=18)
     def require_admin(self):
         if not self.user or self.kiosk:

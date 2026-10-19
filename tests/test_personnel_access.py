@@ -33,6 +33,10 @@ class PersonnelAccessTests(unittest.TestCase):
         second=self.store.create_member('Chief 2','chief2','administrator password','Administrator')
         self.store.update_member(second,self.admin,'Chief','chief','Member')
         with self.assertRaisesRegex(ValueError,'Only administrators'): App.require_admin(obj)
+    def test_schedule_forms_require_administrator(self):
+        for action in (App.shift_form,App.apparatus_form):
+            with self.assertRaisesRegex(ValueError,'Only administrators'):
+                action(self.subject(self.member))
     def test_direct_route_rejects_member_before_rendering(self):
         obj=self.subject(self.member)
         # Stop at the start of rendering, after the route permission check.

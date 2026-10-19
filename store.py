@@ -17,7 +17,11 @@ class Store:
         CREATE UNIQUE INDEX IF NOT EXISTS active_member ON punches(member) WHERE ended IS NULL;
         CREATE TABLE IF NOT EXISTS training(id INTEGER PRIMARY KEY,member INTEGER REFERENCES members(id),title TEXT,day TEXT,hours REAL,category TEXT,document TEXT,original TEXT);
         CREATE TABLE IF NOT EXISTS shifts(id INTEGER PRIMARY KEY,member INTEGER REFERENCES members(id),title TEXT,kind TEXT,start TEXT,end TEXT,location TEXT);
+        CREATE TABLE IF NOT EXISTS apparatus(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE COLLATE NOCASE);
         ''')
+        # Upgrade existing station databases without losing assignments.
+        if 'apparatus' not in {row['name'] for row in self.rows('PRAGMA table_info(shifts)')}:
+            with self.db: self.db.execute("ALTER TABLE shifts ADD COLUMN apparatus TEXT NOT NULL DEFAULT ''")
     def rows(self,q,args=()): return self.db.execute(q,args).fetchall()
     def member(self,member_id):
         return self.db.execute('SELECT id,name,username,role FROM members WHERE id=?',(member_id,)).fetchone()
@@ -93,8 +97,37 @@ class Store:
         except Exception:
             if dest: (self.folder/dest).unlink(missing_ok=True)
             raise
-    def add_shift(self,member,title,kind,start,end,location):
+    def add_apparatus(self,actor_id,name):
+        self.require_admin(actor_id)
+        if not name.strip(): raise ValueError('Enter an apparatus name, such as Engine 1 or Ladder 2.')
+        if name.strip().casefold()=='unassigned': raise ValueError('Unassigned is reserved for shifts without an apparatus.')
+        try:
+            with self.db: self.db.execute('INSERT INTO apparatus(name) VALUES(?)',(name.strip(),))
+        except sqlite3.IntegrityError: raise ValueError('That apparatus already exists.')
+    def schedule_entries(self,actor_id,start,end):
+        actor=self.member(actor_id)
+        if not actor: raise ValueError('Sign in to view the schedule.')
+        query='SELECT s.*,m.name FROM shifts s JOIN members m ON m.id=s.member WHERE s.start < ? AND s.end > ?'
+        args=(end,start)
+        if actor['role']!='Administrator':
+            query+=' AND s.member=?'; args+=(actor_id,)
+        return self.rows(query+' ORDER BY s.start,m.name',args)
+    def remove_shift(self,actor_id,shift_id):
+        self.require_admin(actor_id)
+        with self.db: self.db.execute('DELETE FROM shifts WHERE id=?',(shift_id,))
+    def add_shift(self,member,title,kind,start,end,location,apparatus='',shift_id=None):
         if not title.strip() or kind not in KINDS: raise ValueError('Enter a title and activity.')
         if datetime.fromisoformat(end)<=datetime.fromisoformat(start): raise ValueError('End must be after start, including overnight shifts.')
-        if self.rows('SELECT id FROM shifts WHERE member=? AND start < ? AND end > ?',(member,end,start)): raise ValueError('This assignment overlaps an existing shift.')
-        with self.db: self.db.execute('INSERT INTO shifts(member,title,kind,start,end,location) VALUES(?,?,?,?,?,?)',(member,title.strip(),kind,start,end,location.strip()))
+        if not self.member(member): raise ValueError('Select an existing member.')
+        if apparatus and not self.rows('SELECT id FROM apparatus WHERE name=?',(apparatus,)):
+            raise ValueError('Select an apparatus from the station list, or choose Unassigned.')
+        if self.rows('SELECT id FROM shifts WHERE member=? AND start < ? AND end > ? AND id != ?',
+                     (member,end,start,shift_id if shift_id is not None else -1)):
+            raise ValueError('This assignment overlaps an existing shift for that member.')
+        values=(member,title.strip(),kind,start,end,location.strip(),apparatus)
+        with self.db:
+            if shift_id is None:
+                return self.db.execute('INSERT INTO shifts(member,title,kind,start,end,location,apparatus) VALUES(?,?,?,?,?,?,?)',values).lastrowid
+            if self.db.execute('UPDATE shifts SET member=?,title=?,kind=?,start=?,end=?,location=?,apparatus=? WHERE id=?',values+(shift_id,)).rowcount!=1:
+                raise ValueError('This assignment no longer exists.')
+            return shift_id
