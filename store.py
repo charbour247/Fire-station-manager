@@ -19,6 +19,38 @@ class Store:
         CREATE TABLE IF NOT EXISTS shifts(id INTEGER PRIMARY KEY,member INTEGER REFERENCES members(id),title TEXT,kind TEXT,start TEXT,end TEXT,location TEXT);
         ''')
     def rows(self,q,args=()): return self.db.execute(q,args).fetchall()
+    def member(self,member_id):
+        return self.db.execute('SELECT id,name,username,role FROM members WHERE id=?',(member_id,)).fetchone()
+    def require_admin(self,actor_id):
+        actor=self.member(actor_id)
+        if not actor or actor['role']!='Administrator':
+            raise ValueError('Only administrators can manage personnel.')
+        return actor
+    def update_member(self,actor_id,member_id,name,username,role,password=''):
+        # Check current permissions inside the same write transaction as the edit.
+        try:
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                self.require_admin(actor_id)
+                member=self.member(member_id)
+                if not member: raise ValueError('This member no longer exists.')
+                if not name.strip() or not username.strip():
+                    raise ValueError('Enter a full name and username.')
+                if role not in ('Member','Administrator'):
+                    raise ValueError('Choose Member or Administrator.')
+                if password and len(password)<10:
+                    raise ValueError('New passwords must have at least 10 characters.')
+                if member['role']=='Administrator' and role!='Administrator':
+                    if self.db.execute("SELECT COUNT(*) FROM members WHERE role='Administrator'").fetchone()[0]<=1:
+                        raise ValueError('At least one administrator must remain. Create or promote another administrator first.')
+                self.db.execute('UPDATE members SET name=?,username=?,role=? WHERE id=?',
+                    (name.strip(),username.strip(),role,member_id))
+                if password:
+                    salt=os.urandom(32)
+                    digest=hashlib.pbkdf2_hmac('sha256',password.encode(),salt,300000)
+                    self.db.execute('UPDATE members SET salt=?,password=? WHERE id=?',(salt,digest,member_id))
+        except sqlite3.IntegrityError:
+            raise ValueError('Username already exists.')
     def create_member(self,name,username,password,role='Member'):
         if not name.strip() or not username.strip() or len(password)<10: raise ValueError('Enter a name, username, and password of at least 10 characters.')
         salt=os.urandom(32)

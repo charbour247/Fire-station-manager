@@ -58,12 +58,25 @@ class App(tk.Tk):
             self.page('Timeclock' if self.kiosk else 'Dashboard')
         self.button(form,'Create station account' if first else 'Sign in  →',lambda:self.attempt(login),True).pack(fill='x',pady=24)
         self.label(form,'Local station workspace • Records saved on this computer',11,MUTED).pack(anchor='w')
+    def navigation_items(self):
+        if self.kiosk: return ['Timeclock']
+        items=['Dashboard','Training','Timeclock','Schedule']
+        if self.user and self.user['role']=='Administrator': items.append('Personnel')
+        return items
     def page(self,name):
+        if not self.user:
+            self.login_screen(); return
+        self.user=self.store.member(self.user['id'])
+        if not self.user:
+            self.login_screen(); return
+        if name=='Personnel' and (self.kiosk or self.user['role']!='Administrator'):
+            messagebox.showerror('Access denied','Only administrators can manage personnel.',parent=self)
+            name='Timeclock' if self.kiosk else 'Dashboard'
         self.clear()
         nav=tk.Frame(self,bg=NAVY,width=225); nav.pack(side='left',fill='y'); nav.pack_propagate(False)
         self.label(nav,'✦  STATIONDESK',19,'white').pack(anchor='w',padx=20,pady=(30,4))
         self.label(nav,'FIRE DEPARTMENT',10,'#bcc6cf').pack(anchor='w',padx=42,pady=(0,34))
-        items=['Timeclock'] if self.kiosk else ['Dashboard','Training','Timeclock','Schedule']+(['Personnel'] if self.user['role']=='Administrator' else [])
+        items=self.navigation_items()
         for i,item in enumerate(items):
             tk.Button(nav,text=f'{i+1:02}    {item}',anchor='w',bg=RED if item==name else NAVY,fg='white',font=('Times New Roman',14),relief='flat',padx=24,pady=15,command=lambda v=item:self.page(v),cursor='hand2').pack(fill='x',pady=3)
         self.button(nav,'Sign out',self.login_screen).pack(side='bottom',fill='x',padx=20,pady=22)
@@ -197,21 +210,47 @@ class App(tk.Tk):
             b=datetime.strptime(end.get(),'%Y-%m-%d %H:%M').isoformat(timespec='minutes')
             self.store.add_shift(mapping[member.get()],title.get(),kind.get(),a,b,location.get()); d.destroy(); self.page('Schedule')
         self.button(p,'Save assignment',lambda:self.attempt(save),True).pack(fill='x',pady=18)
+    def require_admin(self):
+        if not self.user or self.kiosk:
+            raise ValueError('Only administrators can manage personnel.')
+        self.user=self.store.require_admin(self.user['id'])
     def show_personnel(self):
+        self.require_admin()
         self.label(self.body,'Member accounts',20).pack(anchor='w')
-        self.label(self.body,'Administrators manage assignments. Members see their own hours and records.',12,MUTED).pack(anchor='w',pady=10)
-        self.button(self.body,'+ Create member',self.member_form,True).pack(anchor='w')
+        self.label(self.body,'Select a member to edit their name, username, role, or password.',12,MUTED).pack(anchor='w',pady=10)
+        self.button(self.body,'+ Create member',lambda:self.attempt(self.member_form),True).pack(anchor='w')
         rows=self.store.rows('SELECT id,name,username,role FROM members ORDER BY name')
-        self.table(self.body,('Name','Username','Role'),[(r['id'],(r['name'],r['username'],r['role'])) for r in rows])
+        tree=self.table(self.body,('Name','Username','Role'),[(r['id'],(r['name'],r['username'],r['role'])) for r in rows])
+        def edit():
+            self.require_admin()
+            if not tree.selection(): raise ValueError('Select a member to edit.')
+            self.member_form(int(tree.selection()[0]))
+        self.button(self.body,'Edit selected member',lambda:self.attempt(edit),True).pack(anchor='w',pady=(0,10))
+        tree.bind('<Double-1>',lambda event:self.attempt(edit))
         self.button(self.body,'Export department hours (CSV)',lambda:self.attempt(self.export)).pack(anchor='w')
-    def member_form(self):
-        d,p=self.dialog('Create member account')
-        name=self.field(p,'Full name'); username=self.field(p,'Username'); password=self.field(p,'Initial password · minimum 10 characters',secret=True)
-        role=self.field(p,'Role','Member',choices=['Member','Administrator'])
+    def member_form(self,member_id=None):
+        self.require_admin()
+        member=self.store.member(member_id) if member_id is not None else None
+        if member_id is not None and not member: raise ValueError('This member no longer exists.')
+        d,p=self.dialog('Edit member account' if member else 'Create member account')
+        name=self.field(p,'Full name',member['name'] if member else '')
+        username=self.field(p,'Username',member['username'] if member else '')
+        password=self.field(p,'New password · leave blank to keep current' if member else 'Initial password · minimum 10 characters',secret=True)
+        role=self.field(p,'Role',member['role'] if member else 'Member',choices=['Member','Administrator'])
+        if member:
+            self.label(p,'Password changes require at least 10 characters.\nExisting hours, documents, and assignments are retained.',11,MUTED,justify='left').pack(anchor='w',pady=12)
         def save():
-            self.store.create_member(name.get(),username.get(),password.get(),role.get()); d.destroy(); self.page('Personnel')
-        self.button(p,'Create account',lambda:self.attempt(save),True).pack(fill='x',pady=20)
+            self.require_admin()
+            if member:
+                self.store.update_member(self.user['id'],member_id,name.get(),username.get(),role.get(),password.get())
+            else:
+                self.store.create_member(name.get(),username.get(),password.get(),role.get())
+            self.user=self.store.member(self.user['id'])
+            d.destroy()
+            self.page('Personnel' if self.user['role']=='Administrator' else 'Dashboard')
+        self.button(p,'Save changes' if member else 'Create account',lambda:self.attempt(save),True).pack(fill='x',pady=20)
     def export(self):
+        self.require_admin()
         path=filedialog.asksaveasfilename(defaultextension='.csv',initialfile='station-hours.csv',filetypes=[('CSV','*.csv')])
         if not path: return
         with open(path,'w',newline='',encoding='utf-8-sig') as f:

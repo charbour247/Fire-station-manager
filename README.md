@@ -18,7 +18,7 @@ Run `Start-Timeclock.bat` for an independent timeclock window. It requires membe
 - Training: completion dates, 0–24 hours per record, categories, copied document attachments, search, and open attachments. Use zero hours for reference materials.
 - Timeclock: Duty, Fundraiser, and Meeting clock-ins, clock-out, and the last 25 entries. Active sessions survive application restarts. Only one activity may run per member.
 - Schedule: administrators assign members and remove assignments; overlapping assignments are rejected. Overnight shifts are supported by entering the following date as the end.
-- Personnel: administrators create member or administrator accounts and export all-time department hour totals to CSV.
+- Personnel: visible only to administrators. Create accounts, select an existing member and click **Edit selected member** (or double-click their row), and export all-time department hour totals to CSV. Editing supports full name, username, Member/Administrator role, and an optional password reset. Leave the password field blank to keep the existing password; new passwords require at least 10 characters. Hours, training documents, and assignments stay linked to the member. The last administrator cannot be demoted. Changes to account details and roles appear when an open app window next navigates; personnel actions recheck current administrator permissions before proceeding.
 - Passwords are salted and hashed with PBKDF2-SHA256, 300,000 iterations.
 
 ## Data and operating scope
