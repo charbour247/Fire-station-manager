@@ -13,7 +13,7 @@ class App(tk.Tk):
         super().__init__()
         self.store=store or Store(); self.kiosk=kiosk; self.user=None; self.timer=None
         self.title('StationDesk | Personnel Timeclock' if kiosk else 'StationDesk | Fire Department Operations')
-        self.geometry('1180x780'); self.minsize(920,660); self.configure(bg=BG)
+        self.geometry('1320x850'); self.minsize(1040,720); self.configure(bg=BG)
         assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))/'assets'
         self.logo=tk.PhotoImage(master=self,file=str(assets/'StationDesk.png'))
         self.logo_small=self.logo.subsample(8,8)
@@ -151,7 +151,15 @@ class App(tk.Tk):
         if self.kiosk: self.label(self.body,'Sign out after recording your time so the next member can sign in.',12,MUTED).pack(anchor='w')
     def dialog(self,title):
         d=tk.Toplevel(self); d.title(title); d.geometry('530x660'); d.configure(bg=BG); d.transient(self); d.grab_set()
-        p=tk.Frame(d,bg=BG,padx=28,pady=18); p.pack(fill='both',expand=True)
+        canvas=tk.Canvas(d,bg=BG,highlightthickness=0)
+        scroll=ttk.Scrollbar(d,orient='vertical',command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right',fill='y'); canvas.pack(side='left',fill='both',expand=True)
+        p=tk.Frame(canvas,bg=BG,padx=28,pady=18)
+        item=canvas.create_window(0,0,window=p,anchor='nw')
+        canvas.bind('<Configure>',lambda event:canvas.itemconfigure(item,width=event.width))
+        p.bind('<Configure>',lambda event:canvas.configure(scrollregion=canvas.bbox('all')))
+        d.bind('<MouseWheel>',lambda event:canvas.yview_scroll(-int(event.delta/120),'units'))
         self.label(p,title,24).pack(anchor='w'); return d,p
     def show_training(self):
         row=tk.Frame(self.body,bg=BG); row.pack(fill='x')
@@ -189,85 +197,32 @@ class App(tk.Tk):
             self.store.add_training(self.user['id'],title.get(),day.get(),hours.get(),category.get(),source.get()); d.destroy(); self.page('Training')
         self.button(p,'Save record',lambda:self.attempt(save),True).pack(fill='x',pady=20)
     def show_schedule(self):
-        admin=self.user['role']=='Administrator'
-        self.schedule_day=getattr(self,'schedule_day',date.today())
-        year,month=getattr(self,'schedule_month',(self.schedule_day.year,self.schedule_day.month))
-        self.schedule_month=(year,month)
-        bar=tk.Frame(self.body,bg=BG); bar.pack(fill='x')
-        def move(offset):
-            index=year*12+month-1+offset
-            self.schedule_month=(index//12,index%12+1)
-            self.schedule_day=date(*self.schedule_month,1)
-            self.page('Schedule')
-        self.button(bar,'‹',lambda:move(-1)).pack(side='left')
-        self.label(bar,date(year,month,1).strftime('%B %Y'),22).pack(side='left',padx=14)
-        self.button(bar,'›',lambda:move(1)).pack(side='left')
-        def today():
-            self.schedule_day=date.today()
-            self.schedule_month=(self.schedule_day.year,self.schedule_day.month)
-            self.page('Schedule')
-        self.button(bar,'Today',today).pack(side='left',padx=8)
-        if admin:
-            self.button(bar,'+ Assignment',lambda:self.attempt(self.shift_form),True).pack(side='right')
-            self.button(bar,'+ Apparatus',lambda:self.attempt(self.apparatus_form)).pack(side='right',padx=8)
-        self.label(self.body,('Station calendar' if admin else 'My calendar')+' · Select a day to view personnel and apparatus · Local station time',11,MUTED).pack(anchor='w',pady=(8,6))
-        weeks=calendar.Calendar(firstweekday=6).monthdatescalendar(year,month)
-        while len(weeks)<6:
-            weeks.append([weeks[-1][-1]+timedelta(days=n) for n in range(1,8)])
-        first=weeks[0][0]; last=weeks[-1][-1]+timedelta(days=1)
-        entries=self.store.schedule_entries(self.user['id'],first.isoformat()+'T00:00',last.isoformat()+'T00:00')
-        def on_day(day):
-            start=day.isoformat()+'T00:00'; end=(day+timedelta(days=1)).isoformat()+'T00:00'
-            return [r for r in entries if r['start']<end and r['end']>start]
-        grid=tk.Frame(self.body,bg='#dedad2'); grid.pack(fill='both',expand=True)
-        for col,heading in enumerate(('Sun','Mon','Tue','Wed','Thu','Fri','Sat')):
-            grid.columnconfigure(col,weight=1,uniform='day')
-            tk.Label(grid,text=heading,bg=NAVY,fg='white',font=('Times New Roman',11,'bold'),pady=5).grid(row=0,column=col,sticky='nsew',padx=1,pady=1)
-        def select(day):
-            self.schedule_day=day; self.schedule_month=(day.year,day.month)
-            self.page('Schedule')
-        for row,week in enumerate(weeks,1):
-            grid.rowconfigure(row,weight=1,uniform='week')
-            for col,day in enumerate(week):
-                daily=on_day(day)
-                text=str(day.day)+(' • Today' if day==date.today() else '')
-                if daily:
-                    text+='\n'+str(len(daily))+' · '+(daily[0]['apparatus'] or 'Unassigned')
-                selected=day==self.schedule_day
-                tk.Button(grid,text=text,anchor='nw',justify='left',font=('Times New Roman',10),
-                          bg=RED if selected else ('white' if day.month==month else '#eae7e1'),
-                          fg='white' if selected else (INK if day.month==month else MUTED),
-                          relief='flat',padx=5,pady=3,width=1,height=2,cursor='hand2',
-                          command=lambda d=day:select(d)).grid(row=row,column=col,sticky='nsew',padx=1,pady=1)
-        selected_rows=on_day(self.schedule_day)
-        self.label(self.body,self.schedule_day.strftime('%A, %B %d')+' · '+str(len(selected_rows))+' assignments',17).pack(anchor='w',pady=(10,0))
-        tree=self.table(self.body,('Member','Apparatus','Assignment','Type','Start','End','Location'),
-            [(r['id'],(r['name'],r['apparatus'] or 'Unassigned',r['title'],r['kind'],local(r['start']),local(r['end']),r['location'])) for r in selected_rows],3)
-        if admin:
-            actions=tk.Frame(self.body,bg=BG); actions.pack(fill='x')
-            def selected_id():
-                if not tree.selection(): raise ValueError('Select an assignment from the day list.')
-                return int(tree.selection()[0])
-            self.button(actions,'Edit selected',lambda:self.attempt(lambda:self.shift_form(selected_id()))).pack(side='left')
-            tree.bind('<Double-1>',lambda event:self.attempt(lambda:self.shift_form(selected_id())))
-            def remove():
-                self.require_admin(); shift_id=selected_id()
-                if messagebox.askyesno('Cancel assignment','Remove the selected assignment?',parent=self):
-                    self.store.remove_shift(self.user['id'],shift_id)
-                    self.page('Schedule')
-            self.button(actions,'Remove selected',lambda:self.attempt(remove)).pack(side='left',padx=8)
+        from scheduler import ScheduleBoard
+        ScheduleBoard(self).mount()
     def apparatus_form(self):
         self.require_admin()
-        d,p=self.dialog('Add station apparatus')
-        name=self.field(p,'Apparatus name · e.g. Engine 1, Ladder 2')
-        current=self.store.rows('SELECT name FROM apparatus ORDER BY name')
-        self.label(p,'Current apparatus:\n'+('\n'.join(r['name'] for r in current) or 'No apparatus added yet.'),12,MUTED,justify='left',wraplength=450).pack(anchor='w',pady=16)
+        d,p=self.dialog('Apparatus & staffing')
+        current=self.store.rows('SELECT * FROM apparatus ORDER BY name')
+        self.label(p,'Select existing apparatus or type a new name',12,MUTED).pack(anchor='w',pady=(16,5))
+        name=tk.StringVar()
+        ttk.Combobox(p,textvariable=name,values=[r['name'] for r in current]).pack(fill='x')
+        minimum=self.field(p,'Minimum on-duty crew · 0 for no target','0')
+        def choose(*args):
+            found=next((r for r in current if r['name'].casefold()==name.get().strip().casefold()),None)
+            minimum.set(str(found['minimum_staff']) if found else '0')
+        name.trace_add('write',choose)
+        self.label(p,'Coverage is evaluated at the time selected on the roster.\nOnly Duty assignments count toward the staffing target.',11,MUTED,justify='left').pack(anchor='w',pady=16)
         def save():
             self.require_admin()
-            self.store.add_apparatus(self.user['id'],name.get())
+            try: target=int(minimum.get())
+            except ValueError: raise ValueError('Staffing target must be a whole number from 0 to 100.')
+            if not 0<=target<=100: raise ValueError('Staffing target must be from 0 to 100.')
+            if not self.store.rows('SELECT name FROM apparatus WHERE name=?',(name.get().strip(),)):
+                self.store.add_apparatus(self.user['id'],name.get())
+            self.store.set_staffing_target(self.user['id'],name.get().strip(),target)
             d.destroy(); self.page('Schedule')
-        self.button(p,'Add apparatus',lambda:self.attempt(save),True).pack(fill='x',pady=18)
-    def shift_form(self,shift_id=None):
+        self.button(p,'Save apparatus',lambda:self.attempt(save),True).pack(fill='x',pady=18)
+    def shift_form(self,shift_id=None,day=None,apparatus_name=None):
         self.require_admin()
         existing=None
         if shift_id is not None:
@@ -285,16 +240,26 @@ class App(tk.Tk):
         options={'Unassigned':''}
         options.update({r['name']:r['name'] for r in self.store.rows('SELECT name FROM apparatus ORDER BY name')})
         apparatus=self.field(p,'Apparatus',existing['apparatus'] if existing and existing['apparatus'] else 'Unassigned',choices=list(options))
-        selected=getattr(self,'schedule_day',date.today()).isoformat()
+        if not existing and apparatus_name: apparatus.set(apparatus_name)
+        platoon=self.field(p,'Shift group',existing['platoon'] if existing and existing['platoon'] else 'Unspecified',choices=['Unspecified','A','B','C','D'])
+        position=self.field(p,'Crew position · e.g. Officer, Driver, Firefighter',existing['position'] if existing else '')
+        selected=(day or getattr(self,'schedule_day',date.today())).isoformat()
         start=self.field(p,'Start · YYYY-MM-DD HH:MM',existing['start'].replace('T',' ') if existing else selected+' 08:00')
         end=self.field(p,'End · YYYY-MM-DD HH:MM',existing['end'].replace('T',' ') if existing else selected+' 16:00')
         location=self.field(p,'Location',existing['location'] if existing else 'Station 1')
+        if not existing:
+            interval=self.field(p,'Repeat every N days','1')
+            count=self.field(p,'Total occurrences · 1 for a single shift, maximum 52','1')
         self.label(p,'Add apparatus from the calendar before assigning it.\nMultiple members can crew the same apparatus.',11,MUTED,justify='left').pack(anchor='w',pady=(10,0))
         def save():
             self.require_admin()
             a=datetime.strptime(start.get(),'%Y-%m-%d %H:%M').isoformat(timespec='minutes')
             b=datetime.strptime(end.get(),'%Y-%m-%d %H:%M').isoformat(timespec='minutes')
-            self.store.add_shift(mapping[member.get()],title.get(),kind.get(),a,b,location.get(),options[apparatus.get()],shift_id)
+            group='' if platoon.get()=='Unspecified' else platoon.get()
+            if existing:
+                self.store.save_shift(self.user['id'],mapping[member.get()],title.get(),kind.get(),a,b,location.get(),options[apparatus.get()],shift_id,group,position.get())
+            else:
+                self.store.repeat_shifts(self.user['id'],mapping[member.get()],title.get(),kind.get(),a,b,location.get(),options[apparatus.get()],group,position.get(),interval.get(),count.get())
             self.schedule_day=datetime.fromisoformat(a).date()
             self.schedule_month=(self.schedule_day.year,self.schedule_day.month)
             d.destroy(); self.page('Schedule')

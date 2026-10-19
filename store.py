@@ -1,6 +1,6 @@
 import sqlite3, hashlib, hmac, os, uuid, shutil
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 KINDS = ('Duty', 'Fundraiser', 'Meeting')
 def now(): return datetime.now(timezone.utc).isoformat()
 class Store:
@@ -22,6 +22,11 @@ class Store:
         # Upgrade existing station databases without losing assignments.
         if 'apparatus' not in {row['name'] for row in self.rows('PRAGMA table_info(shifts)')}:
             with self.db: self.db.execute("ALTER TABLE shifts ADD COLUMN apparatus TEXT NOT NULL DEFAULT ''")
+        for column in ('platoon','position'):
+            if column not in {row['name'] for row in self.rows('PRAGMA table_info(shifts)')}:
+                with self.db: self.db.execute(f"ALTER TABLE shifts ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        if 'minimum_staff' not in {row['name'] for row in self.rows('PRAGMA table_info(apparatus)')}:
+            with self.db: self.db.execute('ALTER TABLE apparatus ADD COLUMN minimum_staff INTEGER NOT NULL DEFAULT 0')
     def rows(self,q,args=()): return self.db.execute(q,args).fetchall()
     def member(self,member_id):
         return self.db.execute('SELECT id,name,username,role FROM members WHERE id=?',(member_id,)).fetchone()
@@ -115,19 +120,58 @@ class Store:
     def remove_shift(self,actor_id,shift_id):
         self.require_admin(actor_id)
         with self.db: self.db.execute('DELETE FROM shifts WHERE id=?',(shift_id,))
-    def add_shift(self,member,title,kind,start,end,location,apparatus='',shift_id=None):
+    def set_staffing_target(self,actor_id,apparatus,minimum):
+        self.require_admin(actor_id)
+        try: minimum=int(str(minimum))
+        except ValueError: raise ValueError('Staffing target must be a whole number from 0 to 100.')
+        if not 0<=minimum<=100: raise ValueError('Staffing target must be from 0 to 100. Use 0 for no target.')
+        with self.db:
+            if self.db.execute('UPDATE apparatus SET minimum_staff=? WHERE name=?',(minimum,apparatus)).rowcount!=1:
+                raise ValueError('Apparatus not found.')
+    def _shift_values(self,member,title,kind,start,end,location,apparatus='',shift_id=None,platoon='',position=''):
         if not title.strip() or kind not in KINDS: raise ValueError('Enter a title and activity.')
         if datetime.fromisoformat(end)<=datetime.fromisoformat(start): raise ValueError('End must be after start, including overnight shifts.')
+        if platoon not in ('','A','B','C','D'): raise ValueError('Choose an A, B, C, D, or Unspecified shift group.')
         if not self.member(member): raise ValueError('Select an existing member.')
         if apparatus and not self.rows('SELECT id FROM apparatus WHERE name=?',(apparatus,)):
             raise ValueError('Select an apparatus from the station list, or choose Unassigned.')
         if self.rows('SELECT id FROM shifts WHERE member=? AND start < ? AND end > ? AND id != ?',
                      (member,end,start,shift_id if shift_id is not None else -1)):
             raise ValueError('This assignment overlaps an existing shift for that member.')
-        values=(member,title.strip(),kind,start,end,location.strip(),apparatus)
+        return (member,title.strip(),kind,start,end,location.strip(),apparatus,platoon,position.strip())
+    def add_shift(self,member,title,kind,start,end,location,apparatus='',shift_id=None,platoon='',position=''):
+        values=self._shift_values(member,title,kind,start,end,location,apparatus,shift_id,platoon,position)
         with self.db:
             if shift_id is None:
-                return self.db.execute('INSERT INTO shifts(member,title,kind,start,end,location,apparatus) VALUES(?,?,?,?,?,?,?)',values).lastrowid
-            if self.db.execute('UPDATE shifts SET member=?,title=?,kind=?,start=?,end=?,location=?,apparatus=? WHERE id=?',values+(shift_id,)).rowcount!=1:
+                return self.db.execute('INSERT INTO shifts(member,title,kind,start,end,location,apparatus,platoon,position) VALUES(?,?,?,?,?,?,?,?,?)',values).lastrowid
+            if self.db.execute('UPDATE shifts SET member=?,title=?,kind=?,start=?,end=?,location=?,apparatus=?,platoon=?,position=? WHERE id=?',values+(shift_id,)).rowcount!=1:
                 raise ValueError('This assignment no longer exists.')
             return shift_id
+    def save_shift(self,actor_id,*args,**kwargs):
+        self.require_admin(actor_id)
+        return self.add_shift(*args,**kwargs)
+    def repeat_shifts(self,actor_id,member,title,kind,start,end,location,apparatus='',platoon='',position='',every_days=1,count=1):
+        self.require_admin(actor_id)
+        try: every_days,count=int(str(every_days)),int(str(count))
+        except ValueError: raise ValueError('Repeat interval and count must be whole numbers.')
+        if not 1<=every_days<=365 or not 1<=count<=52:
+            raise ValueError('Repeat every 1–365 days, with 1–52 total occurrences.')
+        start_dt,end_dt=datetime.fromisoformat(start),datetime.fromisoformat(end)
+        if count>1 and end_dt-start_dt>timedelta(days=every_days):
+            raise ValueError('The repeat interval would overlap this member’s shifts.')
+        values=[]
+        for index in range(count):
+            offset=timedelta(days=index*every_days)
+            a=(start_dt+offset).isoformat(timespec='minutes'); b=(end_dt+offset).isoformat(timespec='minutes')
+            values.append(self._shift_values(member,title,kind,a,b,location,apparatus,None,platoon,position))
+        with self.db:
+            return [self.db.execute('INSERT INTO shifts(member,title,kind,start,end,location,apparatus,platoon,position) VALUES(?,?,?,?,?,?,?,?,?)',v).lastrowid for v in values]
+    def move_shift(self,actor_id,shift_id,target_day,apparatus,source_day=None):
+        self.require_admin(actor_id)
+        rows=self.rows('SELECT * FROM shifts WHERE id=?',(shift_id,))
+        if not rows: raise ValueError('This assignment no longer exists.')
+        r=rows[0]; start=datetime.fromisoformat(r['start']); end=datetime.fromisoformat(r['end'])
+        origin=datetime.fromisoformat(source_day).date() if source_day else start.date()
+        offset=datetime.fromisoformat(target_day).date()-origin
+        return self.add_shift(r['member'],r['title'],r['kind'],(start+offset).isoformat(timespec='minutes'),
+            (end+offset).isoformat(timespec='minutes'),r['location'],apparatus,shift_id,r['platoon'],r['position'])

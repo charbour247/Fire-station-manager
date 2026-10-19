@@ -17,7 +17,9 @@ jobs:
       - name: Test database operations
         run: python -m unittest discover -s tests -v
       - name: Check Python compilation
-        run: python -m py_compile app.py store.py
+        run: python -m py_compile app.py store.py scheduler.py
+      - name: Check scheduling screens and drag-and-drop
+        run: python tests/gui_smoke.py
       - name: Build standalone Windows EXE
         run: |
           python -m pip install pyinstaller==6.16.0

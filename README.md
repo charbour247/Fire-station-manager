@@ -21,9 +21,22 @@ Run `Start-Timeclock.bat` for an independent timeclock window. It requires membe
 - Member dashboard: all-time duty, training, and special-event hours, active status, and next five assignments.
 - Training: completion dates, 0–24 hours per record, categories, copied document attachments, search, and open attachments. Use zero hours for reference materials.
 - Timeclock: Duty, Fundraiser, and Meeting clock-ins, clock-out, and the last 25 entries. Active sessions survive application restarts. Only one activity may run per member.
-- Schedule: a monthly calendar with Previous/Next and Today controls. Click a day to see personnel, apparatus, activity, start/end times, and location. Administrators see the station schedule; members see their own assignments. Administrators use **+ Apparatus** to register vehicles such as Engine 1 or Ladder 2, then **+ Assignment** to choose a member, apparatus, and shift. Select a day-list row and use **Edit selected** to change the assignment or apparatus; **Remove selected** cancels it. Multiple members may crew the same apparatus at the same time, but overlapping assignments for an individual member are rejected. Overnight shifts appear on every day they cover; enter the following date as the end. Existing databases are upgraded automatically, with old assignments marked Unassigned until edited. Apparatus is assigned per shift, so personnel may serve on different vehicles on different dates.
+- Schedule: an apparatus-based roster board with Day, Week, and Month views, color-coded shift groups, named personnel cards, staffing targets, filters, drag-and-drop changes, and recurring assignments. Administrators see and manage the station schedule; members see their own assignments in a read-only view. Existing databases and assignments are upgraded automatically.
 - Personnel: visible only to administrators. Create accounts, select an existing member and click **Edit selected member** (or double-click their row), and export all-time department hour totals to CSV. Editing supports full name, username, Member/Administrator role, and an optional password reset. Leave the password field blank to keep the existing password; new passwords require at least 10 characters. Hours, training documents, and assignments stay linked to the member. The last administrator cannot be demoted. Changes to account details and roles appear when an open app window next navigates; personnel actions recheck current administrator permissions before proceeding.
 - Passwords are salted and hashed with PBKDF2-SHA256, 300,000 iterations.
+
+## Using the scheduling board
+
+The board uses roster and staffing workflows inspired by [Vector Scheduling](https://www.vectorsolutions.com/solutions/vector-scheduling/fire-ems/), with StationDesk branding and Times New Roman typography. This is an independent local application with no connection to Vector's service.
+
+1. Open **Schedule**, then **Apparatus / staffing**. Type a new apparatus name or select an existing vehicle. Set its minimum on-duty crew, or enter 0 for no staffing target.
+2. Choose **Day**, **Week**, or **Month**. Use Previous/Next, Today, or a YYYY-MM-DD date to navigate. The Day and Week boards show apparatus as rows, dates as columns, and personnel as assignment cards. The Month view places cards in calendar days. Both axes scroll when the roster is larger than the window.
+3. Double-click an empty cell to create an assignment for that date and apparatus, or click **+ Assignment**. Choose the member, activity, apparatus, optional A/B/C/D shift group, crew position, start/end, and location. Enter the following date for overnight shifts.
+4. For a rotation, set **Repeat every N days** and **Total occurrences** (maximum 52). For example, a 24-hour shift every 3 days is entered as next-day start/end dates, interval 3, and the desired count. No department rotation is assumed. If any occurrence conflicts with the member's existing assignments, none of the new occurrences are saved.
+5. Drag a card to another apparatus row or date to move that occurrence while retaining its member, start time, duration, group, and position. In Month view, dragging changes its date and keeps its apparatus. Dropping an overnight carryover card shifts the whole assignment by the number of days dragged. Conflicts are rejected. Select a card for full details; double-click it or choose **Edit selected** to edit. Edits and removal affect only that occurrence.
+6. Filter by apparatus, shift group, or activity, or search member names, titles, positions, apparatus, and locations. Group colors A/B/C/D are red/blue/green/purple; ungrouped cards use their activity color.
+
+Coverage figures on the administrator roster count distinct members with active **Duty** assignments at the displayed **Coverage at** time on each day. Enter a 24-hour HH:MM time and click Apply. Red counts are below the configured minimum. Counts use all duty groups and ignore display filters, so filtering the board does not change the staffing calculation. This is a point-in-time staffing indicator; it does not certify full-shift coverage or validate firefighter qualifications. Member views show only their own active duty assignments and do not report department-wide coverage.
 
 ## Data and operating scope
 
@@ -39,7 +52,7 @@ On Windows, run `Build-Windows-EXE.bat`. It downloads PyInstaller and builds `di
 
 ## Verification
 
-Run `py -3 -m unittest discover -s tests -v`. Automated checks cover authentication, persisted data, timeclock transitions and duplicate prevention, activity totals, training validation and attachment copying, and schedule overlap checks. Python compilation and data-layer tests were run in Linux; Windows launchers, desktop shortcuts, and visual rendering require verification on Windows.
+Run `py -3 -m unittest discover -s tests -v`. Automated checks cover authentication, persisted data, timeclock transitions and duplicate prevention, activity totals, training validation and attachment copying, and schedule overlap checks. Python compilation, data-layer tests, and a rendered GUI smoke test were run in Linux. The Windows workflow also runs `python tests/gui_smoke.py` before packaging. Windows launchers, desktop shortcuts, and final Windows rendering still require verification on Windows.
 
 ## Download a Windows EXE from GitHub
 
