@@ -13,6 +13,12 @@ class App(tk.Tk):
         self.store=store or Store(); self.kiosk=kiosk; self.user=None; self.timer=None
         self.title('StationDesk | Personnel Timeclock' if kiosk else 'StationDesk | Fire Department Operations')
         self.geometry('1180x780'); self.minsize(920,660); self.configure(bg=BG)
+        assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))/'assets'
+        self.logo=tk.PhotoImage(master=self,file=str(assets/'StationDesk.png'))
+        self.logo_small=self.logo.subsample(8,8)
+        self.logo_login=self.logo.subsample(2,2)
+        self.iconphoto(True,self.logo)
+        if os.name=='nt': self.iconbitmap(str(assets/'StationDesk.ico'))
         self.option_add('*Font',('Times New Roman',12))
         s=ttk.Style(self); s.theme_use('clam')
         s.configure('.',font=('Times New Roman',12))
@@ -39,7 +45,7 @@ class App(tk.Tk):
     def login_screen(self):
         self.user=None; self.clear()
         brand=tk.Frame(self,bg=NAVY,width=405); brand.pack(side='left',fill='both'); brand.pack_propagate(False)
-        self.label(brand,'✦',64,'#d2b382').pack(pady=(110,20))
+        tk.Label(brand,image=self.logo_login,bg=NAVY).pack(pady=(75,20))
         self.label(brand,'STATIONDESK',27,'white').pack()
         self.label(brand,'FIRE DEPARTMENT OPERATIONS',11,'#c2cbd2').pack(pady=12)
         self.label(brand,'Ready for the next call.',23,'white').pack(pady=(75,18))
@@ -74,7 +80,7 @@ class App(tk.Tk):
             name='Timeclock' if self.kiosk else 'Dashboard'
         self.clear()
         nav=tk.Frame(self,bg=NAVY,width=225); nav.pack(side='left',fill='y'); nav.pack_propagate(False)
-        self.label(nav,'✦  STATIONDESK',19,'white').pack(anchor='w',padx=20,pady=(30,4))
+        tk.Label(nav,text='  STATIONDESK',image=self.logo_small,compound='left',font=('Times New Roman',17),fg='white',bg=NAVY).pack(anchor='w',padx=15,pady=(30,4))
         self.label(nav,'FIRE DEPARTMENT',10,'#bcc6cf').pack(anchor='w',padx=42,pady=(0,34))
         items=self.navigation_items()
         for i,item in enumerate(items):

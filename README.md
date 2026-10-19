@@ -2,6 +2,10 @@
 
 A Windows desktop application for a fire department. The interface uses Times New Roman, vertical navigation, navy panels, and red actions. PStrax and Vector Solutions are design references only; there is no connection to either service.
 
+![StationDesk fire-service emblem](assets/StationDesk.png)
+
+StationDesk uses a red-and-gold fire-service cross with a central flame on the login screen, in navigation, and as its Windows application icon. The multi-size Windows icon and transparent PNG are in `assets`. Keep this folder beside the source files. Compiled Windows builds include the assets inside the EXE. Run `Create-Desktop-Shortcuts.ps1` from the extracted source folder or compiled release folder to apply the emblem to both desktop shortcuts; existing shortcuts with these names are updated.
+
 ## Run on Windows
 
 1. Install Python 3.11 or newer from python.org with the Python launcher and Tcl/Tk support (the normal installer includes these).
